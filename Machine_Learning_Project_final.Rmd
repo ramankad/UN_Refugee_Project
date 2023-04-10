@@ -1,0 +1,883 @@
+---
+title: "Missing_Migrant_ML_Project"
+author: "Raman Kadariya"
+output:
+  html_document: default
+  pdf_document: default
+  word_document: default
+editor_options:
+  chunk_output_type: console
+---
+
+```{r, include=FALSE}
+rm(list=ls())
+```
+
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(echo = FALSE, out.height = "\\textheight",  out.width = "\\textwidth",
+                      out.extra = "keepaspectratio=false")
+```
+
+```{r, include=FALSE}
+library(stringr)
+library(ggplot2)
+library(sf)             
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(tidyverse)
+library(reshape)
+library(gam)
+library(forecast)
+library(neuralnet)
+library(caret)
+library(randomForest)
+library(caret)
+library(xgboost)
+library(cluster)    
+library(factoextra) 
+library(dendextend) 
+library(circlize)
+library(fastDummies)
+```
+
+Variable Name				                        Description
+
+* Web ID -	 				        An automatically generated number used to identify                             each unique entry in the dataset.
+* Region of incident -			The region in which an incident took place. 
+* Reported date -				Estimated date of death. 
+* Reported year -				The year in which the incident occurred.
+* Reported month -			The month in which the incident occurred.
+* Number dead -				The total number of people confirmed dead in one                                 incident, i.e. the number of bodies recovered.  
+* Number missing - 			The total number of those who are missing and are thus                          assumed to be dead.  
+* Total dead and missing -		The sum of the ‘number dead’ and ‘number missing’                                 variables.
+* Number of survivors -			The number of migrants that survived the incident,                             if known. 
+* Number of females -			Indicates the number of females found dead or                                    missing. 
+* Number of males -			Indicates the number of males found dead or missing.
+* Number of children -			Indicates the number of individuals under the age                                of 18 found dead or missing. 
+* Age -					The age of the decedent(s). Occasionally, an estimated age                         range is recorded. 
+* Country of origin -			Country of birth of the decedent. If unknown, the                                entry will be marked “unknown”.
+* Region of origin -			Region of origin of the decedent(s). 
+* Cause of death -			The determination of conditions resulting in the                                   migrant's death i.e. the circumstances of the event                             that produced the fatal injury. 
+* Location description -		Place where the death(s) occurred or where the body                                 or bodies were found. 
+* Location coordinates -		Place where the death(s) occurred or where the body                             or bodies were found. 
+* Migration route -			Name of the migrant route on which incident occurred,                                if known.
+* UNSD geographical grouping -	Geographical region in which the incident took                                   place, as designated by the United Nations                                     Statistics Division (UNSD) geoscheme. 
+* Information source -			Name of source of information for each incident.                                 Multiple sources may be listed.
+* Link -					Links to original reports of migrant deaths / disappearances                             if available. Multiple links may be listed.
+* Source quality -			Incidents are ranked on a scale from 1-5 based on the                            source(s) of information available. 
+* Comments -				        Brief description narrating additional facts about the                             death.  
+* (Note: If no extra information is available, this is left blank.)
+```{r}
+total_data <- read.csv("C:/ND/7. Machine_Learning/Project/Data/Missing_Migrants_Global_Figures_allData_0.csv", 
+                       header=T, stringsAsFactors=T)
+```
+
+```{r, eval=FALSE}
+
+c_dat <- expand.grid(unique(total_data$Region.of.Incident), 
+                     unique(total_data$Reported.Month),
+                            unique(total_data$Incident.year))
+
+names(c_dat) <- c("Region.of.Incident", "Reported.Month", "Incident.year")
+
+dead_or_missing <- males <- females <- children <- rep(0, nrow(c_dat))
+```
+
+```{r, eval=FALSE}
+for(i in 1:nrow(c_dat)){
+  dead_or_missing[i] <- 
+    sum(total_data$Total.Number.of.Dead.and.Missing[which(total_data$Region.of.Incident == c_dat$Region.of.Incident[i] & total_data$Reported.Month == 
+c_dat$Reported.Month[i] & total_data$Incident.year == 
+c_dat$Incident.year[i])],
+                   na.rm = TRUE)
+  
+  males[i] <- 
+    sum(total_data$Number.of.Males[which(total_data$Region.of.Incident == c_dat$Region.of.Incident[i] & total_data$Reported.Month == 
+c_dat$Reported.Month[i] & total_data$Incident.year == 
+c_dat$Incident.year[i])],
+                   na.rm = TRUE)
+  
+  females[i] <- 
+    sum(total_data$Number.of.Females[which(total_data$Region.of.Incident == c_dat$Region.of.Incident[i] & total_data$Reported.Month == 
+c_dat$Reported.Month[i] & total_data$Incident.year == 
+c_dat$Incident.year[i])],
+                  na.rm = TRUE)
+  
+  children[i] <- 
+    sum(total_data$Number.of.Children[which(total_data$Region.of.Incident == c_dat$Region.of.Incident[i] &  total_data$Reported.Month == 
+c_dat$Reported.Month[i] &  total_data$Incident.year == 
+c_dat$Incident.year[i])],
+                    na.rm = TRUE)
+  }
+
+
+c_dat$dead_or_missing <- dead_or_missing
+c_dat$males <- males
+c_dat$females <- females
+c_dat$children <- children
+```
+
+```{r, eval=FALSE}
+causes <- unique(total_data$Cause.of.Death)
+
+res <- as.data.frame(matrix(NA, nrow = nrow(c_dat), ncol = length(causes)))
+
+names(res) <- causes
+
+for(i in 1:nrow(c_dat)){
+  for(j in 1:length(causes)){
+    res[i,j] <- sum(total_data$Number.of.Dead[which(total_data$Region.of.Incident == c_dat$Region.of.Incident[i] &
+                                                      total_data$Reported.Month == c_dat$Reported.Month[i] &  
+                                                      total_data$Incident.year == c_dat$Incident.year[i] &
+                                                      total_data$Cause.of.Death == causes[j])])
+  }
+}
+```
+
+```{r, eval=FALSE}
+c_dat <- cbind.data.frame(c_dat, res)
+```
+
+```{r, eval=FALSE}
+next_year_deaths_or_missing <- rep(NA, nrow(c_dat))
+for(i in 1:nrow(c_dat)){
+  temp <- c_dat$dead_or_missing[which(
+    c_dat$Region.of.Incident == c_dat$Region.of.Incident[i] &
+    c_dat$Reported.Month == c_dat$Reported.Month[i] & 
+      c_dat$Incident.year ==  c_dat$Incident.year[i] + 1)]
+  if(length(temp) > 0){
+     next_year_deaths_or_missing[i] <- temp
+  }
+ 
+}
+```
+
+```{r, eval=FALSE}
+c_dat$next_year_deaths_or_missing <- next_year_deaths_or_missing
+```
+
+```{r, eval=FALSE}
+coords <- total_data$Coordinates
+coords <- str_remove(coords, "POINT")
+coords <- str_remove(coords, "\\(")
+coords <- str_remove(coords, "\\)")
+
+coord_list <- str_split(coords, " ")
+
+lat <- long <- rep(NA, nrow(total_data))
+
+for(i in 1:nrow(total_data)){
+  lat[i] <- as.numeric(coord_list[[i]][3])
+  long[i] <- as.numeric(coord_list[[i]][2])
+} 
+
+total_data$lat <- lat
+total_data$long <- long
+
+```
+
+```{r, eval=FALSE}
+month_n <- rep(NA, nrow(c_dat))
+month_n[which(c_dat$Reported.Month == "January")] <- 1
+month_n[which(c_dat$Reported.Month == "February")] <- 2
+month_n[which(c_dat$Reported.Month == "March")] <- 3
+month_n[which(c_dat$Reported.Month == "April")] <- 4
+month_n[which(c_dat$Reported.Month == "May")] <- 5
+month_n[which(c_dat$Reported.Month == "June")] <- 6
+month_n[which(c_dat$Reported.Month == "July")] <- 7
+month_n[which(c_dat$Reported.Month == "August")] <- 8
+month_n[which(c_dat$Reported.Month == "September")] <- 9
+month_n[which(c_dat$Reported.Month == "October")] <- 10
+month_n[which(c_dat$Reported.Month == "November")] <- 11
+month_n[which(c_dat$Reported.Month == "December")] <- 12
+
+c_dat$month_n <- month_n
+
+```
+
+```{r, eval=FALSE}
+c_dat <- na.omit(c_dat)
+```
+
+
+```{r}
+world <- ne_countries(scale = "medium", returnclass = "sf")
+
+ggplot(data = world)+
+   xlab("Longitude") + ylab("Latitude")+
+  geom_point(data = total_data, aes(long, lat,  color = Region.of.Incident), 
+             na.rm = TRUE)+
+  geom_sf()+
+  theme(legend.position = "bottom")+
+  ggtitle("Incident map")
+```
+
+```{r, eval=FALSE}
+Next_Year_Deaths_Or_Missing <- c_dat$next_year_deaths_or_missing
+hist(Next_Year_Deaths_Or_Missing)
+```
+
+```{r, eval=FALSE}
+Log_Next_Year_Deaths_Or_Missing <- (c_dat$log_next_year_deaths_or_missing <- log(c_dat$next_year_deaths_or_missing+1))
+
+hist(Log_Next_Year_Deaths_Or_Missing)
+```
+
+```{r}
+#load("C:/ND/7. Machine_Learning/Project/Machine_Learning_Project_Part_1.RData")
+```
+
+```{r chunk1}
+set.seed(7)
+total_obs <- dim(c_dat)[1]
+# Data partition / Sample splitting
+train_data_indices <- sample(1:total_obs, 0.8*total_obs)
+train_data <-c_dat[train_data_indices,]
+test_data <- c_dat[-train_data_indices,]
+# Record the size of training data and test data
+train_obs <- dim(train_data)[1]
+test_obs <- dim(test_data)[2]
+```
+
+
+```{r}
+
+lm_full <- lm(log_next_year_deaths_or_missing ~.,
+            data = train_data)
+```
+
+```{r}
+print(summary(lm_full))
+```
+
+```{r Ex4}
+lm_bwd <- step(lm_full, direction = "backward", k = log(train_obs), na.rm=TRUE)
+```
+
+```{r}
+gam_full <- gam(log_next_year_deaths_or_missing~., data = train_data)
+
+```
+
+```{r}
+print(summary(gam_full))
+```
+
+```{r}
+plot(gam_full, col='blue')
+```
+
+```{r}
+lm_pred <- exp(predict(lm_full, newdata=test_data))-1
+lm_bwd_pred <- exp(predict(lm_bwd, newdata=test_data))-1
+gam_pred <- exp(predict(gam_full, newdata = test_data))-1
+```
+
+```{r}
+accuracy(lm_pred, test_data$next_year_deaths_or_missing)
+accuracy(lm_bwd_pred, test_data$next_year_deaths_or_missing)
+accuracy(gam_pred, test_data$next_year_deaths_or_missing)
+```
+
+```{r }
+c_dat_2 <- dummy_cols(c_dat, remove_selected_columns = TRUE)
+train_data <- na.omit(c_dat_2[train_data_indices,])
+test_data <- na.omit(c_dat_2[-train_data_indices,])
+```
+
+```{r}
+
+x_train_nn <- model.matrix(~., data=train_data)[,-1]
+
+x_mean <- apply(x_train_nn, 2, mean)
+x_sd <- apply(x_train_nn, 2, sd)
+x_train_nn <- scale(x_train_nn, center=x_mean, scale=x_sd)
+
+```
+
+```{r}
+x_train_nn <- cbind.data.frame(train_data$log_next_year_deaths_or_missing, x_train_nn)
+colnames(x_train_nn)[1] <- 'log_next_year_dead_or_missing'
+```
+
+```{r}
+x_test_nn <- model.matrix(~., data=test_data)[,-1]
+
+
+x_test_nn <- scale(x_test_nn, center=x_mean, scale=x_sd)
+
+x_test_nn <- cbind.data.frame(test_data$log_next_year_deaths_or_missing,x_test_nn)
+colnames(x_test_nn)[1] <- 'log_next_year_dead_or_missing'
+```
+
+```{r}
+set.seed(7)
+colnames(x_train_nn) <- make.names(colnames(x_train_nn))
+colnames(x_test_nn) <- make.names(colnames(x_test_nn))
+x_test_nn <- x_test_nn[, colSums(is.na(x_train_nn)) == 0]
+x_train_nn <- x_train_nn[,colSums(is.na(x_train_nn)) == 0]
+
+nn_full <- neuralnet(log_next_year_deaths_or_missing~., data = x_train_nn, hidden=c(4))
+
+plot(nn_full)
+```
+
+```{r}
+nn_pred <- exp(predict(nn_full, newdata = x_test_nn)[,1])-1 
+accuracy(nn_pred, test_data$next_year_deaths_or_missing)
+```
+
+```{r}
+print(c(lm_pred[1], gam_pred[1], nn_pred[1]))
+```
+
+#### Migrant Region of Origin:
+
+```{r}
+head(sort(summary(total_data$Region.of.Origin), decreasing = TRUE), 10)
+```
+
+#### Leading Cause of Death:
+
+```{r}
+
+head(sort(summary(total_data$Cause.of.Death), decreasing = TRUE), 10)
+
+```
+
+#### Location With Highest reported Death
+
+```{r}
+head(sort(summary(total_data$Location.of.death), decreasing = TRUE), 10)
+```
+
+
+```{r}
+ggplot(data = c_dat, aes(Reported.Month, dead_or_missing)) +
+  facet_wrap(~ Incident.year,  nrow = 6,
+  ncol = 2 ) +
+  geom_line(color='red')+
+  theme(axis.text.x = element_text(
+size = 6, angle = 45))
+```
+
+
+```{r}
+ggplot(data = c_dat, aes(Incident.year, dead_or_missing)) +
+  facet_wrap(~ Region.of.Incident) +
+  geom_point(color='darkblue')+
+  theme(axis.text.x = element_text(
+size = 8, angle = 45))
+```
+
+
+```{r}
+world <- ne_countries(scale = "medium", returnclass = "sf")
+class(world)
+
+ggplot(data = world)+
+   xlab("Longitude") + ylab("Latitude")+
+  geom_point(data = total_data[total_data$Region.of.Incident=='Mediterranean',], aes(long, lat,  color = Region.of.Incident), 
+             na.rm = TRUE)+
+  geom_sf()+
+  theme(legend.position = "bottom")+
+  ggtitle("Incident map")
+```
+
+```{r}
+ggplot(data = c_dat[c_dat$Region.of.Incident=='Mediterranean',], aes(Incident.year, dead_or_missing))  +
+  geom_point(color='darkblue')+
+  theme(axis.text.x = element_text(
+size = 8, angle = 45))+
+  ggtitle("Number of Incidents in Mediterranean per Year")
+```
+
+```{r}
+ggplot(data = c_dat[c_dat$Region.of.Incident=='Mediterranean',], aes(Reported.Month, dead_or_missing))  +
+  geom_point(color='darkblue')+
+  theme(axis.text.x = element_text(
+size = 8, angle = 45))+
+  ggtitle("Number of Incidents in Mediterranean per Month")
+```
+
+```{r}
+Dd_or_Al <- data.frame(total_data$Number.of.Dead,
+                 total_data$Number.of.Survivors)
+d_dat <- melt(Dd_or_Al)
+ggplot(data = d_dat) + 
+  geom_boxplot(mapping = aes(x = variable, y = value, fill = variable))+ 
+  scale_y_log10(limits=c(1,2000))+
+  labs(y = "Value", 
+       x = "Migrants",
+       title = "Number of Dead Migrants vs Survivors")
+```
+
+Total Dead or Missing:
+
+```{r}
+print(sum(c_dat$dead_or_missing, na.rm = T))
+```
+
+Total Survivors:
+
+```{r}
+print(sum(total_data$Number.of.Survivors, na.rm = T))
+```
+
+
+```{r}
+Gender <- data.frame(c_dat$males,
+                 c_dat$females,
+                 c_dat$children)
+e_dat <- melt(Gender)
+ggplot(e_dat, aes(x=value, fill=variable)) +
+  scale_x_log10(limits=c(1,1000))+
+  ylab("Density") + xlab("Count (log_scale)") +
+  geom_density(alpha=0.5)
+```
+
+##Clustering
+
+For our initial clustering lets try to fit four clusters to the data. To run K-means on our data we use the `kmeans()` function. The parameters we need to set for the K-means algorithm are:
+
+* x - The data we want the algorithm to cluster
+* centers -  The number of clusters to generate. 
+* itermax - The number of iterations to let k-means perform
+* nstart - The number of starts to try for K-means. Remember K-means may not converge to the optimal solution from a single start point. Therefore we may want to try multiple start points. 
+
+```{r}
+ncol(c_dat)
+c_dat_2 <- na.omit(c_dat)
+
+off_dat = scale(c_dat_2[,c(4:16,18:20, 25)])
+
+names(off_dat)[1] <- "migrants"
+
+```
+
+```{r}
+length(off_dat)
+```
+
+```{r}
+set.seed(12345) # Set seed for reproducibility
+fit_1 <- kmeans(x = off_dat, # Set data as explantory variables 
+                centers = 4,  # Set number of clusters
+                nstart = 25, # Set number of starts
+                iter.max = 100 )
+```
+
+The results of our clustering is stored in `fit_1`. We can extract the clusters and center values for this as follows:
+
+```{r}
+clusters_1 <- fit_1$cluster
+c_dat_2$cluster <- clusters_1
+centers_1 <- fit_1$centers
+```
+
+Lets first check how many samples have ended up in each cluster:
+
+```{r}
+summary(as.factor(clusters_1))
+```
+
+Here we see that we have 1 samples in cluster 1, 663 in cluster 2, 701 in cluster 3, and 136 in cluster 4. We can view the migrants in each cluster as follows:
+
+```{r}
+# Check migrants in cluster 1
+cat("Cluster 1 migrants:\n")
+
+print(unique(c_dat_2[clusters_1 == 1,c("Region.of.Incident", "Reported.Month","Incident.year")]))
+
+print(unique(c_dat_2[clusters_1 == 2,c("Region.of.Incident", "Reported.Month","Incident.year")]))
+
+print(unique(c_dat_2[clusters_1 == 3,c("Region.of.Incident", "Reported.Month","Incident.year")]))
+
+print(unique(c_dat_2[clusters_1 == 4,c("Region.of.Incident", "Reported.Month","Incident.year")]))
+
+```
+
+Lets check how the center values for each of the clusters compare to each other. To make this interpret-able lets just use the overall migration values:
+
+```{r}
+# Create vector of clusters
+cluster <- c(1: 4)
+# Extract centers
+center_df <- data.frame(cluster, centers_1)
+
+# Reshape the data
+center_reshape <- gather(center_df, features, values, dead_or_missing:Mixed.or.unknown.Vehicle.accident...death.linked.to.hazardous.transport.Violence)
+# View first few rows
+print(head(center_reshape))
+print(tail(center_reshape))
+```
+
+```{r}
+# Create plot
+g_heat_1 <- ggplot(data = center_reshape, # Set dataset
+                   aes(x = features, y = cluster, fill = values)) + # Set aesthetics
+  scale_y_continuous(breaks = seq(1, 4, by = 1)) + # Set y axis breaks
+  geom_tile() + # Geom tile for heatmap
+  coord_equal() +  # Make scale the same for both axis
+  theme_set(theme_bw(base_size = 20) ) + # Set theme
+  scale_fill_gradient2(low = "blue", # Choose low color
+                       mid = "white", # Choose mid color
+                       high = "red", # Choose high color
+                       midpoint =0, # Choose mid point
+                       space = "Lab", 
+                       na.value ="grey", # Choose NA value
+                       guide = "colourbar", # Set color bar
+                       aesthetics = "fill") + # Select aesthetics to apply
+  coord_flip()
+g_heat_1
+```
+
+
+### Calculate cluster number
+
+Perhaps four is not the optimal cluster number for this dataset. Lets try a few different cluster values and view the error for each different number. Remember that the error will always decrease as we add more clusters so that we are looking for the point where the rate of improvement in performance starts to decrease.
+
+I have found that in reality a plot this clear is rarely found and it often be best to choose the number of clusters based on the needs of the analysis. Let's create it anyway and see what it looks like for this dataset:
+
+
+```{r}
+kmean_withinss <- function(k) {
+  cluster <- kmeans( x = off_dat,  # Set data to use
+                    centers = k,  # Set number of clusters as k, changes with input into function
+                    nstart = 25, # Set number of starts
+                    iter.max = 100) # Set max number of iterations
+  return (cluster$tot.withinss) # Return cluster error/within cluster sum of squares
+}
+
+
+# Set maximum cluster number
+max_k <-20
+# Run algorithm over a range of cluster numbers 
+wss <- sapply(2:max_k, kmean_withinss)
+
+
+# Create a data frame to plot the graph
+elbow <-data.frame(2:max_k, wss)
+
+# Plot the graph with ggplot
+g_e1 <- ggplot(elbow, # Set dataset
+              aes(x = X2.max_k, y = wss)) + # Set aesthetics
+  theme_set(theme_bw(base_size = 22) ) + # Set theme
+  geom_point(color = "blue") + # Set geom point for scatter
+  geom_line() + # Geom line for a line between points
+  scale_x_continuous(breaks = seq(1, 20, by = 1)) + # Set breaks for x-axis
+  labs(x = "Number of Clusters", y="Within Cluster \nSum of Squares") + # Set labels
+  theme(panel.grid.major = element_blank(), # Turn of the background grid
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank()) 
+# Generate plot
+g_e1
+```
+
+
+```{r}
+set.seed(12345) # Set seed for reproducibility
+fit_2 <- kmeans(x = off_dat, # Set data as explantory variables 
+                centers = 8,  # Set number of clusters
+                nstart = 25, # Set number of starts
+                iter.max = 100 )
+```
+
+The results of our clustering is stored in `fit_2`. We can extract the clusters and center values for this as follows:
+
+```{r}
+clusters_2 <- fit_2$cluster
+c_dat_2$cluster <- clusters_2
+centers_2 <- fit_2$centers
+```
+
+```{r}
+summary(as.factor(clusters_2))
+```
+
+```{r}
+# Check migrants in cluster 2
+cat("Cluster 2 migrants:\n")
+
+unique(c_dat_2[clusters_2 == 1,c("Region.of.Incident", "Reported.Month","Incident.year")])
+
+unique(c_dat_2[clusters_2 == 2,c("Region.of.Incident", "Reported.Month","Incident.year")])
+
+unique(c_dat_2[clusters_2 == 3,c("Region.of.Incident", "Reported.Month","Incident.year")])
+
+unique(c_dat_2[clusters_2 == 4,c("Region.of.Incident", "Reported.Month","Incident.year")])
+
+unique(c_dat_2[clusters_2 == 5,c("Region.of.Incident", "Reported.Month","Incident.year")])
+
+unique(c_dat_2[clusters_2 == 6,c("Region.of.Incident", "Reported.Month","Incident.year")])
+
+unique(c_dat_2[clusters_2 == 7,c("Region.of.Incident", "Reported.Month","Incident.year")])
+
+unique(c_dat_2[clusters_2 == 8,c("Region.of.Incident", "Reported.Month","Incident.year")])
+
+```
+
+```{r}
+# Calculate distance between samples
+dis = dist(off_dat)^2
+# Set plotting parameters to view plot
+op <- par(mfrow= c(1,1), oma= c(0,0, 3, 0),
+          mgp= c(1.6,.8,0), mar= .1+c(4,2,2,2))
+# Create silhouette for k=4
+sil = silhouette (fit_1$cluster , # Set clustering
+                  dis, # Set distance 
+                  full = TRUE) # Generate silhouette for all samples
+# Generate silhouette plot
+plot(sil)
+```
+
+```{r}
+# Create silhouette plot for k=6
+sil = silhouette (fit_2$cluster , # Set clustering 
+                  dis, # Set distance
+                  full = TRUE) # Generate for all samples
+# Generate plot
+plot(sil)
+```
+
+```{r Clustering Cardinality}
+
+plot_clust_cardinality <- cbind.data.frame(clusters_1, clusters_2) # Join clusters with  k =4 and k=6
+
+names(plot_clust_cardinality) <- c("k_4", "k_8") # Set names
+
+# Create bar plots
+g_2 <- ggplot(plot_clust_cardinality, aes( x = factor(k_4))) + # Set x as cluster values
+  geom_bar(stat = "count", fill = "steelblue") + # Use geom_bar with stat = "count" to count observations
+    labs(x = "Cluster Number", y="Points in Cluster", # Set labels
+         title = "Cluster Cardinality (k = 4)") +
+  theme(panel.grid.major = element_blank(), # Turn of the background grid
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank()) 
+
+
+g_3 <- ggplot(plot_clust_cardinality, aes( x = factor(k_8))) + # Set x as cluster values
+  geom_bar(stat = "count", fill = "steelblue") + # Use geom_bar with stat = "count" to count observations
+    labs(x = "Cluster Number", y="Points in Cluster", # Set labels
+         title = "Cluster Cardinality (k = 8)") +
+  theme(panel.grid.major = element_blank(), # Turn of the background grid
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank()) 
+
+# Generate bar plots
+g_2
+g_3
+```
+
+
+```{r Check Cluster Magnitude}
+k_4_mag <- cbind.data.frame(c(1:4), fit_1$withinss) # Extract within cluster sum of squares
+
+names(k_4_mag) <- c("cluster", "withinss") # Fix names for plot data
+
+
+# Create bar plot
+g_4 <- ggplot(k_4_mag, aes(x = cluster, y = withinss)) + # Set x as cluster, y as withinss
+  geom_bar(stat = "identity", fill = "steelblue") + # Use geom bar and stat = "identity" to plot values directly
+   labs(x = "Cluster Number", y="Total Point to Centroid Distance", # Set labels
+         title = "Cluster Magnitude (k = 4)") +
+  theme(panel.grid.major = element_blank(), # Turn of the background grid
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank()) 
+  
+k_8_mag <- cbind.data.frame(c(1:8), fit_2$withinss) # Extract within cluster sum of squares
+names(k_8_mag) <- c("cluster", "withinss") # Fix names for plot data
+
+# Create bar plot
+g_5 <- ggplot(k_8_mag, aes(x = cluster, y = withinss)) +  # Set x as cluster, y as withinss
+  geom_bar(stat = "identity", fill = "steelblue") + # Use geom bar and stat = "identity" to plot values directly
+   labs(x = "Cluster Number", y="Total Point to Centroid Distance", # Set labels
+         title = "Cluster Magnitude (k = 8)") +
+  theme(panel.grid.major = element_blank(), # Turn of the background grid
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank()) 
+
+# Generate plots
+g_4
+g_5
+```
+
+```{r Magnitude v Cardinality}
+k_4_dat <- cbind.data.frame(table(clusters_1), k_4_mag[,2]) # Join magnitude and cardinality
+
+names(k_4_dat) <- c("cluster", "cardinality", "magnitude") # Fix plot data names
+
+# Create scatter plot
+g_6 <- ggplot(k_4_dat, aes(x = cardinality, y = magnitude, color = cluster)) + # Set aesthetics
+  geom_point(alpha = 0.8, size  = 4) +  # Set geom point for scatter
+ geom_smooth(aes(x = cardinality, y = magnitude), method = "lm",
+              se = FALSE, inherit.aes = FALSE, alpha = 0.5) + # Set trend  line
+  labs(x = "Cluster Cardinality", y="Total Point to Centroid Distance", # Set labels
+         title = "Cluster Magnitude vs Cardinality \n(k = 4)") +
+  theme(panel.grid.major = element_blank(), # Turn of the background grid
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank()) 
+
+
+k_8_dat <- cbind.data.frame(table(clusters_2), k_8_mag[,2]) # Join magnitude and cardinality
+
+names(k_8_dat) <- c("cluster", "cardinality", "magnitude") # Fix plot data names
+
+# Create scatter plot
+g_7 <- ggplot(k_8_dat, aes(x = cardinality, y = magnitude, color = cluster)) + # Set aesthetics
+  geom_point(alpha = 0.8, size = 4) +  # Set geom point for scatter
+  geom_smooth(aes(x = cardinality, y = magnitude), method = "lm",
+              se = FALSE, inherit.aes = FALSE, alpha = 0.5) + # Set trend  line
+  labs(x = "Cluster Cardinality", y="Total Point to Centroid Distance", # Set labels
+         title = "Cluster Magnitude vs Cardinality \n(k = 8)") +
+  theme(panel.grid.major = element_blank(), # Turn of the background grid
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank()) 
+
+# Generate scatter plots
+g_6
+g_7
+```
+
+```{r}
+k_4_sol <- cbind.data.frame(off_dat[off_dat %in% c("Region.of.Incident", "Reported.Month","Incident.year")],
+                            clusters_1[off_dat %in% c("Region.of.Incident", "Reported.Month","Incident.year")])
+# Set names on new dataset
+names(k_4_sol) <- c("migrants", "cluster")
+cat("When K = 4:")
+print(k_4_sol)
+```
+
+
+```{r vis clus num 2}
+# Create function to try different cluster numbers
+kmean_withinss <- function(k) {
+  cluster <- kmeans( x = off_dat,  # Set data to use
+                    centers = k,  # Set number of clusters as k, changes with input into function
+                    nstart = 25, # Set number of starts
+                    iter.max = 100) # Set max number of iterations
+  return (cluster$tot.withinss) # Return cluster error/within cluster sum of squares
+}
+
+
+# Set maximum cluster number
+max_k <-20
+# Run algorithm over a range of cluster numbers 
+wss <- sapply(2:max_k, kmean_withinss)
+
+
+# Create a data frame to plot the graph
+elbow <-data.frame(2:max_k, wss)
+
+# Plot the graph with gglop
+g_8 <- ggplot(elbow, aes(x = X2.max_k, y = wss)) +
+  theme_set(theme_bw(base_size = 22) ) +
+  geom_point(color = "blue") +
+  geom_line() +
+  scale_x_continuous(breaks = seq(1, 20, by = 1)) +
+  labs(x = "Number of Clusters", y="Within Cluster \nSum of Squares") +
+  theme(panel.grid.major = element_blank(), # Turn of the background grid
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank()) 
+g_8
+```
+
+```{r}
+# Create silhouette plot summary
+fviz_nbclust(off_dat, # Set dataset
+             kmeans,# Set clustering method
+             method = "silhouette") # Set evaluation method
+```
+
+```{r Gap stat}
+# compute gap statistic
+set.seed(999999)
+gap_stat <- clusGap(off_dat, FUN = kmeans, nstart = 25,
+                    K.max = 20, B = 50)
+# Print the result
+print(gap_stat, method = "firstmax")
+# Visulaize Result
+fviz_gap_stat(gap_stat)
+```
+
+```{r Run K-means 3}
+set.seed(12345) # Set seed for reproducibility
+fit_3 <- kmeans(x = off_dat, # Set data as explantory variables 
+                centers = 6,  # Set number of clusters
+                nstart = 25, # Set number of starts
+                iter.max = 100 ) # Set maximum number of iterations to use
+
+# Extract clusters
+clusters_3 <- fit_3$cluster
+# Extract centers
+centers_3 <- fit_3$centers
+
+# Check samples per cluster
+summary(as.factor(clusters_3))
+```
+
+Lets view the migrants in each cluster:
+
+```{r}
+# Check migrants in cluster 1
+cat("Cluster 3 migrants:\n")
+
+print(unique(c_dat_2[clusters_3 == 1,c("Region.of.Incident", "Reported.Month","Incident.year")]))
+
+print(unique(c_dat_2[clusters_3 == 2,c("Region.of.Incident", "Reported.Month","Incident.year")]))
+
+print(unique(c_dat_2[clusters_3 == 3,c("Region.of.Incident", "Reported.Month","Incident.year")]))
+
+print(unique(c_dat_2[clusters_3 == 4,c("Region.of.Incident", "Reported.Month","Incident.year")]))
+
+print(unique(c_dat_2[clusters_3 == 5,c("Region.of.Incident", "Reported.Month","Incident.year")]))
+
+print(unique(c_dat_2[clusters_3 == 6,c("Region.of.Incident", "Reported.Month","Incident.year")]))
+```
+
+Lets look at the cluster centers and see how they compare:
+
+```{r}
+# Create cluster vector
+cluster <- c(1:6)
+# Join cluster vector and centers
+center_df <- data.frame(cluster, centers_3)
+
+# Reshape the data
+center_reshape <- gather(center_df, features, values, dead_or_missing:Mixed.or.unknown.Vehicle.accident...death.linked.to.hazardous.transport.Violence)
+
+# View first few rows
+print(head(center_reshape))
+print(tail(center_reshape))
+```
+
+```{r}
+# Create plot
+g_heat_2 <- ggplot(data = center_reshape, # Set dataset
+                   aes(x = features, y = cluster, fill = values)) + # Set aesthetics
+  scale_y_continuous(breaks = seq(1, 6, by = 1)) + # Set y axis breaks
+  geom_tile() + # Set geom tile for heatmap
+  coord_equal() +  # Set coord equal 
+  theme_bw() + # Set theme
+  scale_fill_gradient2(low = "blue", # Choose low color
+                       mid = "white", # Choose mid color
+                       high = "red", # Choose high color
+                       midpoint =0, # Choose mid point
+                       space = "Lab", 
+                       na.value ="grey", # Choose NA value
+                       guide = "colourbar", # Set color bar
+                       aesthetics = "fill") + # Select aesthetics to apply
+  coord_flip() # Rotate plot
+# Generate plot
+g_heat_2
+```
+
